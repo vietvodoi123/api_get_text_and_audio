@@ -15,22 +15,23 @@ class CreateTaskRequest(BaseModel):
     base_url: str  # Ví dụ: "https://truyenyy.xyz/truyen/thu-vien-khoa-hoc-ky-thuat-dich/chuong-{x}"
     css_selector_title: str  # Ví dụ: ".chap-title"
     css_selector_content: str  # Ví dụ: "#inner_chap_content_1"
-    total_chapters: int
+    start_chap: int  # Chương bắt đầu (x)
+    end_chap: int  # Chương kết thúc (y)
+    group_size: int
     webhook_url: Optional[str] = None  # 🟢 Webhook có thể có hoặc không
 
 
 @app.post("/create-task")
 async def create_task(req: CreateTaskRequest, background_tasks: BackgroundTasks):
     # Tính số nhóm: mỗi nhóm 10 chương
-    groups = []
-    for i in range(0, req.total_chapters, 10):
-        start = i + 1
-        end = min(req.total_chapters, i + 10)
-        groups.append((start, end))
+    chapters = list(range(req.start_chap, req.end_chap + 1))
+
+    # Chia nhóm theo group_size
+    grouped_chapters = [chapters[i:i + req.group_size] for i in range(0, len(chapters), req.group_size)]
 
     created_tasks = []
     # Tạo task cho mỗi nhóm
-    for start, end in groups:
+    for start, end in grouped_chapters:
         task_id = str(uuid.uuid4())
         tasks_store[task_id] = {
             "status": "pending",
