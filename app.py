@@ -31,7 +31,8 @@ async def create_task(req: CreateTaskRequest, background_tasks: BackgroundTasks)
 
     created_tasks = []
     # Tạo task cho mỗi nhóm
-    for start, end in grouped_chapters:
+    for group in grouped_chapters:
+        start, end = group[0], group[-1]
         task_id = str(uuid.uuid4())
         tasks_store[task_id] = {
             "status": "pending",
