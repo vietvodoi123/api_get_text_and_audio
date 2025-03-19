@@ -2,24 +2,31 @@ import asyncio
 import aiohttp
 from utils import fetch_chapter_content, split_text, call_audio_api
 
-async def send_webhook(webhook_url, data):
-    """Gửi request đến webhook một cách bất đồng bộ."""
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(webhook_url, json=data) as response:
-                response_text = await response.text()
-                if response.status == 200:
-                    print(f"🔔 Webhook gửi thành công: {response_text}")
-                else:
-                    print(f"⚠️ Lỗi webhook (HTTP {response.status}): {response_text}")
-        except Exception as e:
-            print(f"❌ Lỗi khi gửi webhook: {e}")
+async def retry_call_audio_api(segment, max_retries=3, delay=2):
+    """Gọi API tạo audio, nếu thất bại sẽ thử lại (tối đa max_retries lần)."""
+    for attempt in range(1, max_retries + 1):
+        print(f"🔄 Đang gọi API tạo audio (lần {attempt})...")
+        audio_url = await call_audio_api(segment)
+        if audio_url:
+            print(f"✅ Audio tạo thành công: {audio_url}")
+            return audio_url
+        print(f"⚠️ Lỗi, thử lại sau {delay} giây...")
+        await asyncio.sleep(delay)
+    print("❌ Không thể tạo audio sau nhiều lần thử.")
+    return None  # Nếu thử hết số lần mà vẫn thất bại thì trả về None
 
 async def process_task(task_id, req, start, end, tasks_store):
-    tasks_store[task_id]['status'] = 'processing'
+    tasks_store[task_id] = {
+        'status': 'processing',
+        'log': [],
+        'audio_urls': []
+    }
+    tasks_store[task_id]['log'].append("🚀 Bắt đầu xử lý task...")
 
     async with aiohttp.ClientSession() as session:
-        # Tạo danh sách các task theo thứ tự chương từ start đến end
+        print("📥 Đang lấy nội dung chương truyện...")
+        tasks_store[task_id]['log'].append("📥 Đang lấy nội dung chương truyện...")
+
         fetch_tasks = [
             fetch_chapter_content(
                 session,
@@ -29,29 +36,29 @@ async def process_task(task_id, req, start, end, tasks_store):
             )
             for chap_num in range(start, end + 1)
         ]
-        # asyncio.gather sẽ trả về danh sách các kết quả theo thứ tự của fetch_tasks
         chapters = await asyncio.gather(*fetch_tasks)
 
-    # Hợp nhất nội dung các chương theo thứ tự
-    group_content = "\n\n".join([title + "\n" + content for title, content in chapters])
+    print("📖 Nội dung đã tải xong, đang xử lý...")
+    tasks_store[task_id]['log'].append("📖 Nội dung đã tải xong, đang xử lý...")
 
-    # Chèn <break time="0.3s"/> sau mỗi ký tự xuống dòng và cắt theo limit 3000 ký tự
+    # Hợp nhất nội dung
+    group_content = "\n\n".join(f"{title}\n{content}" for title, content in chapters)
+
+    # Cắt thành các đoạn nhỏ (tối đa 3000 ký tự)
     segments = split_text(group_content, 3000)
+    print(f"🔀 Nội dung chia thành {len(segments)} đoạn.")
+    tasks_store[task_id]['log'].append(f"🔀 Nội dung chia thành {len(segments)} đoạn.")
 
-    # Gọi API tạo audio cho từng đoạn (song song)
-    audio_tasks = [call_audio_api(segment) for segment in segments]
+    # Gọi API tạo audio
+    print("🎙️ Đang tạo audio...")
+    tasks_store[task_id]['log'].append("🎙️ Đang tạo audio...")
+
+    audio_tasks = [retry_call_audio_api(segment) for segment in segments]
     audio_urls = await asyncio.gather(*audio_tasks)
 
+    # Cập nhật trạng thái
     tasks_store[task_id]['status'] = 'completed'
-    tasks_store[task_id]['audio_urls'] = audio_urls
+    tasks_store[task_id]['audio_urls'] = [url for url in audio_urls if url]
+    tasks_store[task_id]['log'].append("✅ Hoàn thành!")
 
-    # Kiểm tra xem có webhook không
-    if req.webhook_url:
-        data = {
-            "task_id": task_id,
-            "story_id": req.story_id,
-            "audio_urls": audio_urls,
-            "chapters": {"from": start, "to": end},
-        }
-        # Gửi webhook bất đồng bộ
-        await send_webhook(req.webhook_url, data)
+    print("✅ Task đã hoàn tất!")
