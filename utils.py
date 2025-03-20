@@ -150,14 +150,17 @@ async def call_audio_api(segment):
 
     data = json.dumps(payload)
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, headers=headers, data=data) as response:
-            if response.status != 200:
-                text = await response.text()
-                raise Exception(f"Lỗi khi gọi API tạo audio: status {response.status}, response: {text}")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, data=data) as response:
+                if response.status != 200:
+                    text = await response.text()
+                    print(f"⚠️ Lỗi khi gọi API: {response.status} - {text}")
+                    return None  # Trả về None thay vì raise Exception
 
-            # 1) Đọc toàn bộ phản hồi dưới dạng text
-            text_response = await response.text()
-
-            return extract_audio_url(text_response)
+                text_response = await response.text()
+                return extract_audio_url(text_response)  # Hàm này cần được định nghĩa để lấy URL từ phản hồi
+    except Exception as e:
+        print(f"❌ Lỗi ngoại lệ khi gọi API: {e}")
+        return None  # Trả về None khi có lỗi xảy ra
 

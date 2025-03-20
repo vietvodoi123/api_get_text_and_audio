@@ -13,7 +13,7 @@ async def retry_call_audio_api(segment, max_retries=3, delay=2):
         print(f"⚠️ Lỗi, thử lại sau {delay} giây...")
         await asyncio.sleep(delay)
     print("❌ Không thể tạo audio sau nhiều lần thử.")
-    return None  # Nếu thử hết số lần mà vẫn thất bại thì trả về None
+    return None
 
 async def process_task(task_id, req, start, end, tasks_store):
     tasks_store[task_id] = {
@@ -49,12 +49,39 @@ async def process_task(task_id, req, start, end, tasks_store):
     print(f"🔀 Nội dung chia thành {len(segments)} đoạn.")
     tasks_store[task_id]['log'].append(f"🔀 Nội dung chia thành {len(segments)} đoạn.")
 
-    # Gọi API tạo audio
-    print("🎙️ Đang tạo audio...")
-    tasks_store[task_id]['log'].append("🎙️ Đang tạo audio...")
+    # Gửi tất cả yêu cầu API đồng thời
+    print("🎙️ Đang gửi tất cả yêu cầu tạo audio đồng thời...")
+    tasks_store[task_id]['log'].append("🎙️ Đang gửi tất cả yêu cầu tạo audio đồng thời...")
 
-    audio_tasks = [retry_call_audio_api(segment) for segment in segments]
-    audio_urls = await asyncio.gather(*audio_tasks)
+    # Gửi đồng thời tất cả request
+    tasks = [call_audio_api(segment) for segment in segments]
+    audio_urls = await asyncio.gather(*tasks)
+
+    # Lọc các đoạn thất bại
+    failed_segments = [(idx, segments[idx]) for idx, url in enumerate(audio_urls) if url is None]
+
+    # Nếu có lỗi, thử lại với những đoạn bị lỗi
+    max_retries = 3
+    retry_delay = 20
+    for retry in range(1, max_retries + 1):
+        if not failed_segments:
+            break  # Không còn lỗi thì thoát
+
+        print(f"🔁 Thử lại {len(failed_segments)} đoạn (Lần {retry}) sau {retry_delay} giây...")
+        tasks_store[task_id]['log'].append(f"🔁 Thử lại {len(failed_segments)} đoạn (Lần {retry}) sau {retry_delay} giây...")
+        await asyncio.sleep(retry_delay)
+
+        # Gửi lại các request bị lỗi
+        retry_tasks = [call_audio_api(segment) for _, segment in failed_segments]
+        retry_results = await asyncio.gather(*retry_tasks)
+
+        # Cập nhật danh sách lỗi
+        for i, (idx, _) in enumerate(failed_segments):
+            if retry_results[i]:  # Nếu thành công, cập nhật vào danh sách audio_urls
+                audio_urls[idx] = retry_results[i]
+
+        # Cập nhật danh sách lỗi mới
+        failed_segments = [(idx, segments[idx]) for idx, url in enumerate(audio_urls) if url is None]
 
     # Cập nhật trạng thái
     tasks_store[task_id]['status'] = 'completed'
